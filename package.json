@@ -1,1 +1,31 @@
-{"name":"inference-gateway","private":true,"type":"module","scripts":{"build":"pnpm -r build","dev":"pnpm --parallel --filter @gateway/mock-worker --filter @gateway/service dev"}}
+{
+  "name": "inference-gateway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @gateway/shared build && pnpm --parallel --filter @gateway/mock-worker --filter @gateway/service dev",
+    "start:gateway": "pnpm --filter @gateway/service start",
+    "start:mock": "pnpm --filter @gateway/mock-worker start",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run --passWithNoTests"
+  },
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=22 <23",
+    "pnpm": "10.14.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/node": "22.19.0",
+    "eslint": "9.39.1",
+    "prettier": "3.6.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.4",
+    "vitest": "3.2.4"
+  }
+}

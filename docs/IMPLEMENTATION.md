@@ -23,18 +23,18 @@ Still unproven: clean installation, compiled startup, streaming, SDK compatibili
 
 ## Decisions to settle before their dependent phase
 
-| Decision | Proposed starting point | Needed before |
-| --- | --- | --- |
-| Local real workers | Mock workers first; real backend validation when hardware is available | Phase 22 |
-| Quality evaluation | Mark all initial scores as placeholders; record dataset and evaluation version later | Phase 13 |
-| Latency units | Convert output-token duration to milliseconds before adding TTFT | Phase 13 |
-| Analyzer precedence | Hints choose task; independently collect every hard capability requirement | Phase 12 |
-| Health eligibility | Include degraded workers; exclude unhealthy and draining workers | Phase 7 |
-| Adaptive load expression | Use `(inFlight + (queueDepth ?? 0)) / maxConcurrency` | Phase 18 |
-| Example inconsistency | Worker `ollama-1` references unregistered `gemma`; remove it or register it in valid example config | Phase 2 |
-| Live model latency | Track throughput as well as latency; define aggregation and sample threshold | Phase 13 |
-| Reload scope | Build and validate replacement resources before swapping; retire old pools after active requests finish | Phase 16 |
-| Missing SSE completion | Treat EOF without a valid terminal marker as interruption, never cache it | Phase 5 |
+| Decision                 | Proposed starting point                                                                                 | Needed before |
+| ------------------------ | ------------------------------------------------------------------------------------------------------- | ------------- |
+| Local real workers       | Mock workers first; real backend validation when hardware is available                                  | Phase 22      |
+| Quality evaluation       | Mark all initial scores as placeholders; record dataset and evaluation version later                    | Phase 13      |
+| Latency units            | Convert output-token duration to milliseconds before adding TTFT                                        | Phase 13      |
+| Analyzer precedence      | Hints choose task; independently collect every hard capability requirement                              | Phase 12      |
+| Health eligibility       | Include degraded workers; exclude unhealthy and draining workers                                        | Phase 7       |
+| Adaptive load expression | Use `(inFlight + (queueDepth ?? 0)) / maxConcurrency`                                                   | Phase 18      |
+| Example inconsistency    | Worker `ollama-1` references unregistered `gemma`; remove it or register it in valid example config     | Phase 2       |
+| Live model latency       | Track throughput as well as latency; define aggregation and sample threshold                            | Phase 13      |
+| Reload scope             | Build and validate replacement resources before swapping; retire old pools after active requests finish | Phase 16      |
+| Missing SSE completion   | Treat EOF without a valid terminal marker as interruption, never cache it                               | Phase 5       |
 
 These clarify implementation ambiguities; changes to public behavior should be reflected in SPEC.md when agreed.
 
@@ -306,3 +306,15 @@ Classifier in a worker pool, Redis stores, runtime worker mutations, embedding m
 ## Completion record
 
 For each completed phase, append: commit/PR, commands run, observed results, changed assumptions and remaining limitations. A pushed scaffold is not evidence that its runtime acceptance checks passed.
+
+### Phase 1 progress
+
+Implemented Node 22/pnpm 10.14.0 metadata, formatted manifests, exact dependency versions, shared compiled exports, package-local output directories, root development/build/lint/typecheck/test commands, ESLint/Prettier configuration, Node types declaration and setup/startup documentation. Gateway config paths support source and compiled module layouts with a GATEWAY_CONFIG override. Fixed the nonexistent Fastify request.signal reference while preparing compilation.
+
+Validation after dependencies were installed in the normal terminal:
+
+- Frozen offline install succeeded using the existing pnpm store; lockfile matches manifests.
+- `pnpm typecheck`, `pnpm lint`, `pnpm format:check` and `pnpm build` passed on Node 26.7.0.
+- `pnpm test` runs successfully with no test files; it establishes no behavioral coverage.
+- Compiled startup reached the listen calls, but this sandbox denied binding ports 8080/8081 with EPERM. HTTP smoke checks could not run.
+- Node 22 remains unavailable in this shell. Node 22 installation/build and compiled HTTP startup must still be checked in a normal terminal before marking Phase 1 complete.
