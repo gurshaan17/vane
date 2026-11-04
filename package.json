@@ -1,0 +1,1 @@
+{"name":"inference-gateway","private":true,"type":"module","scripts":{"build":"pnpm -r build","dev":"pnpm --parallel --filter @gateway/mock-worker --filter @gateway/service dev"}}
