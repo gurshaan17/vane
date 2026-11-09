@@ -83,6 +83,9 @@ export const gatewayConfigSchema = z
         port: integer.max(65535).default(8080),
         adminPort: integer.max(65535).default(8081),
         bodyLimitBytes: integer.default(1048576),
+        maxMessages: integer.default(1024),
+        maxHeaderBytes: integer.default(16384),
+        maxHeaders: integer.default(100),
         defaultTimeoutMs: integer.default(120000),
         shutdownGraceMs: integer.default(30000),
       })

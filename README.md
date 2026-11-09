@@ -2,7 +2,7 @@
 
 Single-instance OpenAI-compatible inference gateway in TypeScript. The design is in [docs/SPEC.md](docs/SPEC.md); the delivery checklist is in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
 
-The repository currently contains the workspace foundation and a JSON chat proxy to a mock worker. Streaming, authentication, routing and resilience are later phases. Use this scaffold locally until those protections are implemented.
+The repository currently contains the workspace foundation, validated configuration and an HTTP request lifecycle around a JSON chat proxy to a mock worker. Streaming, authentication, routing and retries are later phases. Use this scaffold locally until those protections are implemented.
 
 ## Requirements and installation
 
@@ -68,18 +68,38 @@ Configuration is validated before listening. Unknown fields, duplicate IDs or al
 
 The loader separates YAML reading, schema validation and secret resolution. Call `redactConfig` before serializing a resolved configuration; it replaces API key hashes and worker credentials with `[REDACTED]`. Never log the raw resolved object.
 
+## HTTP request lifecycle
+
+`createApp(config)` in `apps/gateway/src/app.ts` constructs the gateway without opening a port; `server.ts` loads configuration and starts the listener. Integration tests can inject requests, supply a dispatch function and observe finalization without starting a process.
+
+Chat requests require a nonempty model, a nonempty messages array and an optional boolean `stream`. Validation preserves additional OpenAI fields, tool messages and multimodal content parts. The gateway applies these configurable limits under `server`:
+
+| Setting            | Default | Rejection               |
+| ------------------ | ------- | ----------------------- |
+| `bodyLimitBytes`   | 1048576 | 413 `request_too_large` |
+| `maxMessages`      | 1024    | 413 `request_too_large` |
+| `maxHeaderBytes`   | 16384   | 431 `invalid_request`   |
+| `maxHeaders`       | 100     | 431 `invalid_request`   |
+| `defaultTimeoutMs` | 120000  | 504 `upstream_timeout`  |
+
+Optional extensions use `gateway: { priority, task, cache, timeoutMs, routing }` in the body, or the `x-gateway-*` headers defined in [SPEC.md](docs/SPEC.md#62-gateway-extensions). Each header overrides its corresponding body field. Invalid effective extension values return 400. Priority and task enter the request context; cache bypass and routing overrides are validated for later phases and do not enable caching or routing today. Bench role enforcement arrives with authentication in Phase 14.
+
+The deadline starts before body parsing. A timeout extension can shorten it but cannot extend it; timeout headers also cover stalled uploads. The same abort signal reaches upstream fetch and response reads. Disconnects abort outstanding work. One finalizer clears the deadline timer and disconnect/finish listeners, logs the terminal outcome and calls the optional completion observer once.
+
+Every parsed HTTP request returns `x-request-id`. Inbound IDs must match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`; other values are replaced with a UUID v7. Errors contain `error: { message, type, code, request_id }`, including JSON parsing and limit failures. HTTP parser failures before Fastify creates a request also receive an error envelope and a generated ID. Other routing, admission and cache response headers arrive with their owning phases. Post-header stream failures currently close the connection; SSE error events and terminal-marker handling belong to Phase 5.
+
 ## Workspace commands
 
-| Command             | Purpose                                  |
-| ------------------- | ---------------------------------------- |
-| `pnpm build`        | Build packages in dependency order       |
-| `pnpm typecheck`    | Check TypeScript without emitting output |
-| `pnpm lint`         | Run ESLint with TypeScript rules         |
-| `pnpm format`       | Format supported repository files        |
-| `pnpm format:check` | Check formatting                         |
-| `pnpm test`         | Run configuration and contract tests     |
+| Command             | Purpose                                    |
+| ------------------- | ------------------------------------------ |
+| `pnpm build`        | Build packages in dependency order         |
+| `pnpm typecheck`    | Check TypeScript without emitting output   |
+| `pnpm lint`         | Run ESLint with TypeScript rules           |
+| `pnpm format`       | Format supported repository files          |
+| `pnpm format:check` | Check formatting                           |
+| `pnpm test`         | Run configuration and HTTP lifecycle tests |
 
-The current tests cover configuration and request extension contracts. SDK compatibility and streaming checks belong to later phases.
+The current tests cover configuration, request extension contracts, validation, deadlines, exactly-once finalization, real HTTP disconnects and upstream cancellation. HTTP tests bind temporary loopback ports. SDK compatibility and complete streaming checks belong to later phases.
 
 Example JSON request:
 

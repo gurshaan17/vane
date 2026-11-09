@@ -1,6 +1,6 @@
 # Inference Gateway implementation plan
 
-Status: proposed execution plan. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
+Status: execution in progress; Phase 2 and Phase 3 exit checks pass. Phase 1's original Node 22 frozen-install check remains unverified. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
 
 This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. The current repository is an initial scaffold; it does not yet satisfy P0. Keep later functionality out of earlier phases unless required to make that phase work.
 
@@ -8,7 +8,7 @@ This plan divides the specification into small deliverables that can be reviewed
 
 Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a gateway proxy, a JSON mock worker, starter YAML configuration and a lockfile.
 
-Phase 1 now provides compiled shared exports, per-package builds, workspace checks and an explicit disconnect controller. Frozen install, lint, typecheck, formatting and build passed on Node 26. Node 22 verification and compiled HTTP startup remain pending because the execution environment lacked Node 22 and denied listening on ports. The gateway still forwards upstream headers wholesale and reports readiness without checking the worker. The mock worker returns JSON even when streaming is requested. SDK compatibility, streaming and lifecycle correctness remain unproven.
+Phases 1–3 provide compiled shared exports, workspace checks, schema-derived configuration and a tested HTTP request lifecycle. Phase 3 verification passed on an installed Node 22.19.0 runtime, including compiled HTTP startup and JSON proxying. The gateway preserves its own request ID and forwards only the upstream content type; readiness still does not check the worker. The mock worker returns JSON even when streaming is requested. SDK compatibility and complete streaming behavior remain unproven. Phase 1 still lacks its original frozen-install evidence on Node 22.
 
 ## Execution rules
 
@@ -65,6 +65,8 @@ These clarify implementation ambiguities; changes to public behavior should be r
 ## Phase 3 — HTTP request lifecycle
 
 **Depends on:** 2. **Spec:** sections 6, 7.1, 9.4.
+
+**Status:** complete; see the Phase 3 completion record for verification and scope.
 
 1. Separate app construction from process startup so integration checks can create and close a service.
 2. Implement chat body validation with unknown OpenAI fields preserved, body/message/header limits and safe request IDs.
@@ -327,3 +329,23 @@ Validation after dependencies were installed in the normal terminal:
 - Replaced the local scaffold config and added a separate deployment example without the unregistered gemma reference. The proxy still uses its first worker until routing phases.
 - Added tests for examples, defaults, invalid configurations, extension values, missing secrets and redaction. Node 22 remains unavailable; validation was run on Node 26.
 - Verification: 23 tests, workspace build, typecheck, lint and formatting passed. Compiled startup rejects missing secrets with field paths. Both compiled services started in an HTTP smoke check, but the existing chat proxy returned an empty body; end-to-end proxy correctness remains pending in its lifecycle/adapter phases.
+
+### Phase 3 completion
+
+Prerequisite Phase 2 changes were committed separately as `352c10c` (`feat: add shared contracts and configuration validation`). Phase 3 is recorded by the commit containing this completion entry.
+
+- Split `createApp` from process startup. Tests construct/close the app, inject dispatch behavior and observe terminal outcomes without loading configuration or opening ports at import time.
+- Added zod chat envelope/message validation with passthrough fields, including tool messages and multimodal parts. Malformed envelopes, invalid JSON and invalid effective extensions return 400 `invalid_request` before dispatch.
+- Added validated `server.maxMessages` (1024), `server.maxHeaderBytes` (16384) and `server.maxHeaders` (100), alongside the existing 1 MiB body limit. Body/message overflows return 413; header count/byte overflows return 431, including parser-level overflow before Fastify creates a request.
+- Normalize all five header/body extensions with per-field header precedence and strict positive safe-integer timeout values. Priority defaults to selector configuration until authenticated key defaults arrive in Phase 14. Routing/cache extensions are carried to dispatch but their later-phase behavior is not implemented.
+- Accept safe inbound request IDs of 1–128 characters; generate UUID v7 IDs otherwise. Return the gateway ID on success, early rejection and errors; upstream IDs cannot overwrite it. Centralized OpenAI-shaped errors hide unexpected internal and upstream failure details.
+- Start total deadlines before body parsing; apply header timeouts during upload and body timeouts relative to the original arrival time. Deadlines can only shorten. Pass one abort signal through upstream fetch and body reading; abort on unfinished response close or interrupted upload.
+- A single guarded finalizer records completed/rejected/cancelled/timeout outcomes, removes listeners and clears its timer. Timeout finalization happens before sending the error response to avoid a synchronous response-finish race. A post-header timeout terminates the connection; SSE error framing remains Phase 5 work.
+- Non-streaming upstream bodies are read as JSON instead of relaying fetch transport headers; this also resolves the empty-body proxy behavior observed after Phase 2. The full pool-based adapter, canonical model mapping and SDK acceptance remain Phase 4 work.
+
+Verification on Node 22.19.0 with pnpm 10.14.0:
+
+- `pnpm test`: **90 tests passed** (23 configuration/contract tests and 67 HTTP/lifecycle tests). Real loopback HTTP checks exercised disconnects, aborted uploads, configured/header deadlines during stalled uploads, parser header overflow, post-header cancellation, JSON proxying and fetch cancellation at a real worker connection. Local socket tests ran outside the filesystem sandbox because sandboxed port binding returns EPERM.
+- `pnpm build`, `pnpm typecheck`, `pnpm lint` and `pnpm format:check`: passed.
+- A temporary Node 22 smoke harness launched `apps/mock-worker/dist/server.js` and `apps/gateway/dist/server.js` on available local ports with an isolated configuration. Observed health success, chat HTTP 200 with the expected JSON content and `x-request-id: compiled-smoke`, and invalid-body HTTP 400 `invalid_request`. Both child processes were stopped after the check.
+- No new dependencies. Health-aware readiness, authentication, model selection, retries, full decision telemetry and complete SSE behavior retain their planned owners in later phases.
