@@ -1,6 +1,6 @@
 # Inference Gateway implementation plan
 
-Status: proposed execution plan. Source of truth: [SPEC.md](SPEC.md), Draft v0.1.
+Status: proposed execution plan. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
 
 This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. The current repository is an initial scaffold; it does not yet satisfy P0. Keep later functionality out of earlier phases unless required to make that phase work.
 
@@ -8,7 +8,7 @@ This plan divides the specification into small deliverables that can be reviewed
 
 Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a gateway proxy, a JSON mock worker, starter YAML configuration and a lockfile.
 
-Still unproven: clean installation, compiled startup, streaming, SDK compatibility and cancellation. The gateway currently uses `request.signal`, forwards upstream headers wholesale and reports readiness without checking the worker. These need explicit implementation and verification. The mock worker currently returns JSON even when streaming is requested. The shared package exports TypeScript source, which needs a production build arrangement.
+Phase 1 now provides compiled shared exports, per-package builds, workspace checks and an explicit disconnect controller. Frozen install, lint, typecheck, formatting and build passed on Node 26. Node 22 verification and compiled HTTP startup remain pending because the execution environment lacked Node 22 and denied listening on ports. The gateway still forwards upstream headers wholesale and reports readiness without checking the worker. The mock worker returns JSON even when streaming is requested. SDK compatibility, streaming and lifecycle correctness remain unproven.
 
 ## Execution rules
 
@@ -318,3 +318,12 @@ Validation after dependencies were installed in the normal terminal:
 - `pnpm test` runs successfully with no test files; it establishes no behavioral coverage.
 - Compiled startup reached the listen calls, but this sandbox denied binding ports 8080/8081 with EPERM. HTTP smoke checks could not run.
 - Node 22 remains unavailable in this shell. Node 22 installation/build and compiled HTTP startup must still be checked in a normal terminal before marking Phase 1 complete.
+
+### Phase 2 progress
+
+- Added shared schema-derived model, worker, priority, task and capability contracts, runtime request/routing/decision interfaces and request extension validation.
+- Added full configuration defaults, field-path diagnostics, duplicate/alias/reference checks, capacity/timeout/weight validation and strict unknown-field rejection.
+- Separated YAML reading, validation and environment secret resolution. Startup rejects missing secrets; effective configuration serialization uses explicit redaction.
+- Replaced the local scaffold config and added a separate deployment example without the unregistered gemma reference. The proxy still uses its first worker until routing phases.
+- Added tests for examples, defaults, invalid configurations, extension values, missing secrets and redaction. Node 22 remains unavailable; validation was run on Node 26.
+- Verification: 23 tests, workspace build, typecheck, lint and formatting passed. Compiled startup rejects missing secrets with field paths. Both compiled services started in an HTTP smoke check, but the existing chat proxy returned an empty body; end-to-end proxy correctness remains pending in its lifecycle/adapter phases.

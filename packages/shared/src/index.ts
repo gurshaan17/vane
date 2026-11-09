@@ -7,3 +7,6 @@ export interface ChatRequest {
   messages: ChatMessage[];
   stream?: boolean;
 }
+
+export * from './contracts.js';
+export * from './config.js';

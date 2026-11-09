@@ -54,7 +54,11 @@ importers:
         specifier: 5.12.8
         version: 5.12.8
 
-  packages/shared: {}
+  packages/shared:
+    dependencies:
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
 
 packages:
 

@@ -1,4 +1,17 @@
+# Local scaffold only: authentication is implemented in Phase 14.
 server:
   port: 8080
-  workerUrl: http://localhost:8081
-  model: mock-model
+  adminPort: 8082
+models:
+  - id: mock-model
+    capabilities: [chat]
+    contextWindow: 8192
+    qualitySource: placeholder
+    quality: { chat: 0.5 }
+    baseline: { ttftMs: 0, tokensPerSec: 100 }
+workers:
+  - id: mock-1
+    backend: mock
+    baseUrl: http://localhost:8081
+    models: { mock-model: mock-model }
+    maxConcurrency: 16

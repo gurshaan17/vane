@@ -55,27 +55,31 @@ Build order follows workspace dependencies. Each package emits JavaScript and de
 
 ## Configuration
 
-`config/gateway.yaml` supplies the gateway port, mock worker URL and exposed model. Its default path resolves relative to the gateway module and works for both source and compiled startup. Keep the `config/` directory alongside `apps/` when deploying this scaffold.
+`config/gateway.yaml` supplies the gateway settings, model registry and worker definitions. Its default path resolves relative to the gateway module and works for both source and compiled startup. Keep the `config/` directory alongside `apps/` when deploying this scaffold.
 
 | Variable         | Purpose                                                              | Default                          |
 | ---------------- | -------------------------------------------------------------------- | -------------------------------- |
 | `GATEWAY_CONFIG` | YAML path; relative paths resolve from the process working directory | Repository `config/gateway.yaml` |
 | `PORT`           | Mock worker listening port                                           | `8081`                           |
 
-No secrets are required by the current scaffold. Do not commit `.env` files. The full configuration and secret resolution arrive in Phase 2.
+The local configuration needs no secrets. `config/deployment.example.yaml` demonstrates the full schema, including canonical model mappings and placeholder quality scores. To validate that example at startup, set `GATEWAY_CONFIG=config/deployment.example.yaml`, `KEY_TEAM_A_SHA256`, `KEY_BENCH_SHA256` (64 hexadecimal SHA-256 characters each), and `VLLM_API_KEY`. These settings do not enable authentication or routing yet; the current proxy uses the first configured worker.
+
+Configuration is validated before listening. Unknown fields, duplicate IDs or aliases, invalid references, nonpositive capacities/timeouts and selector weights that do not sum to one fail with field paths. Defaults are defined in `packages/shared/src/config.ts`. Worker credentials use `apiKeyEnv`; literal secrets and URL credentials are rejected. Missing required environment secrets fail startup. Do not commit `.env` files.
+
+The loader separates YAML reading, schema validation and secret resolution. Call `redactConfig` before serializing a resolved configuration; it replaces API key hashes and worker credentials with `[REDACTED]`. Never log the raw resolved object.
 
 ## Workspace commands
 
-| Command             | Purpose                                      |
-| ------------------- | -------------------------------------------- |
-| `pnpm build`        | Build packages in dependency order           |
-| `pnpm typecheck`    | Check TypeScript without emitting output     |
-| `pnpm lint`         | Run ESLint with TypeScript rules             |
-| `pnpm format`       | Format supported repository files            |
-| `pnpm format:check` | Check formatting                             |
-| `pnpm test`         | Run Vitest; currently permits an empty suite |
+| Command             | Purpose                                  |
+| ------------------- | ---------------------------------------- |
+| `pnpm build`        | Build packages in dependency order       |
+| `pnpm typecheck`    | Check TypeScript without emitting output |
+| `pnpm lint`         | Run ESLint with TypeScript rules         |
+| `pnpm format`       | Format supported repository files        |
+| `pnpm format:check` | Check formatting                         |
+| `pnpm test`         | Run configuration and contract tests     |
 
-An empty test suite is not proof of gateway correctness. SDK compatibility and streaming checks belong to later phases.
+The current tests cover configuration and request extension contracts. SDK compatibility and streaming checks belong to later phases.
 
 Example JSON request:
 
@@ -84,3 +88,5 @@ curl http://localhost:8080/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{"model":"mock-model","messages":[{"role":"user","content":"Hello"}]}'
 ```
+
+Architecture review and optional feature proposals: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

@@ -1,0 +1,143 @@
+# Configuration example, not a production-ready gateway at this phase.
+server:
+  port: 8080
+  adminPort: 8081
+  bodyLimitBytes: 1048576
+  defaultTimeoutMs: 120000
+  shutdownGraceMs: 30000
+
+auth:
+  keys:
+    - id: team-a
+      name: Team A
+      hashEnv: KEY_TEAM_A_SHA256 # env var holding the SHA-256 of the key
+      roles: [client]
+      allowedModels: ['*']
+      defaultPriority: balanced
+      limits: { rpm: 600, tpm: 200000, maxConcurrent: 32 }
+    - id: bench
+      name: Benchmark runner
+      hashEnv: KEY_BENCH_SHA256
+      roles: [client, bench]
+      allowedModels: ['*']
+      limits: { rpm: 100000, tpm: 100000000, maxConcurrent: 2000 }
+
+limits:
+  maxGlobalInFlight: 500
+  maxEventLoopLagMs: 100 # shed load above this p99 lag
+
+rateLimit:
+  store: memory # memory | redis
+  failMode: open # open | closed (only matters for redis)
+
+cache:
+  enabled: true
+  store: memory # memory | redis
+  ttlSeconds: 600
+  maxEntries: 5000
+  maxEntryBytes: 262144
+  requireDeterministic: true
+  replayStreaming: true
+
+selector:
+  defaultPriority: balanced
+  minQuality: 0.5
+  weights:
+    low_latency: { quality: 0.15, latency: 0.75, cost: 0.10 }
+    balanced: { quality: 0.40, latency: 0.40, cost: 0.20 }
+    high_quality: { quality: 0.75, latency: 0.15, cost: 0.10 }
+
+models:
+  - id: llama-3
+    aliases: [llama3]
+    capabilities: [chat, completion, streaming, json_mode]
+    contextWindow: 8192
+    qualitySource: placeholder # replace with eval-set results
+    quality: { chat: 0.75, code: 0.70, reasoning: 0.65, summarization: 0.75 }
+    baseline: { ttftMs: 300, tokensPerSec: 70 }
+    costPer1kTokens: 2
+  - id: mistral
+    capabilities: [chat, completion, streaming]
+    contextWindow: 8192
+    qualitySource: placeholder
+    quality: { chat: 0.70, code: 0.62, reasoning: 0.60, summarization: 0.70 }
+    baseline: { ttftMs: 200, tokensPerSec: 90 }
+    costPer1kTokens: 1
+  - id: phi
+    capabilities: [chat, streaming]
+    contextWindow: 4096
+    qualitySource: placeholder
+    quality: { chat: 0.55, code: 0.50, reasoning: 0.45, summarization: 0.55 }
+    baseline: { ttftMs: 120, tokensPerSec: 120 }
+    costPer1kTokens: 0.5
+
+workers:
+  - id: vllm-1
+    backend: vllm
+    baseUrl: http://vllm-1:8000
+    maxConcurrency: 16
+    apiKeyEnv: VLLM_API_KEY
+    models:
+      {
+        llama-3: meta-llama/Meta-Llama-3-8B-Instruct,
+        mistral: mistralai/Mistral-7B-Instruct-v0.3,
+      }
+  - id: vllm-2
+    backend: vllm
+    baseUrl: http://vllm-2:8000
+    maxConcurrency: 16
+    apiKeyEnv: VLLM_API_KEY
+    models: { llama-3: meta-llama/Meta-Llama-3-8B-Instruct }
+  - id: ollama-1
+    backend: ollama
+    baseUrl: http://ollama-1:11434
+    maxConcurrency: 4
+    models: { phi: phi3 }
+
+health:
+  probeIntervalMs: 5000
+  unhealthyAfterFailures: 3
+  recoverAfterSuccesses: 2
+  degradedErrorRate: 0.2
+
+routing:
+  strategy: adaptive # round_robin | least_in_flight | power_of_two | adaptive
+  maxQueue: 200
+  queueTimeoutMs: 2000
+  adaptive:
+    wLoad: 0.5
+    wLat: 0.3
+    wErr: 0.2
+    errScale: 5
+    degradedPenalty: 0.5
+    minSamples: 20
+    rampUpMs: 10000
+    sample: all # all | p2c
+
+resilience:
+  maxAttempts: 2
+  connectTimeoutMs: 2000
+  firstByteTimeoutMs: 30000
+  streamIdleTimeoutMs: 15000
+  retryBudget: { ratio: 0.1, windowMs: 10000 }
+  breaker:
+    {
+      consecutiveFailures: 5,
+      errorRate: 0.5,
+      minRequests: 20,
+      windowMs: 30000,
+      openMs: 10000,
+      maxOpenMs: 60000,
+      halfOpenMax: 2,
+    }
+
+streaming:
+  clientStallMs: 30000
+  heartbeatMs: 15000
+
+observability:
+  decisionBuffer: 1000
+  otlpEndpoint: http://otel-collector:4318
+logging:
+  level: info
+  logBodies: false
