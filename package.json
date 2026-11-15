@@ -11,7 +11,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r typecheck",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:smoke": "pnpm build && node scripts/smoke-http.mjs"
   },
   "packageManager": "pnpm@10.14.0",
   "engines": {

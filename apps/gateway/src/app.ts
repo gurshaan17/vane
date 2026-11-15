@@ -1,5 +1,4 @@
 import Fastify from 'fastify';
-import { Readable } from 'node:stream';
 import type { GatewayRequest, RequestExtensions } from '@gateway/shared';
 import type { ResolvedConfig } from './config.js';
 import { errorBody, GatewayError, normalizeError } from './errors.js';
@@ -9,6 +8,7 @@ import {
   type FinalizedRequest,
 } from './lifecycle.js';
 import { normalizeExtensions, validateChatBody } from './validation.js';
+import { createWorkerDispatch } from './dispatch.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -19,61 +19,17 @@ declare module 'fastify' {
 export type ChatDispatch = (
   request: GatewayRequest,
   extensions: RequestExtensions,
-) => Promise<{ statusCode: number; body: unknown; contentType?: string }>;
+  traceparent?: string,
+) => Promise<{
+  statusCode: number;
+  body: unknown;
+  contentType?: string;
+  headers?: Record<string, string>;
+}>;
 
 export interface AppOptions {
   dispatchChat?: ChatDispatch;
   onFinalize?: (result: FinalizedRequest) => void;
-}
-
-// The single-worker proxy is retained until the adapter and routing phases.
-function proxyChat(config: ResolvedConfig): ChatDispatch {
-  const worker = config.workers[0];
-  return async (request) => {
-    try {
-      const upstream = await fetch(
-        `${worker.baseUrl.replace(/\/$/, '')}/v1/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...(worker.apiKey
-              ? { authorization: `Bearer ${worker.apiKey}` }
-              : {}),
-          },
-          body: JSON.stringify(request.body),
-          signal: request.signal,
-        },
-      );
-      if (!upstream.ok) {
-        await upstream.body?.cancel();
-        throw new GatewayError(
-          502,
-          'upstream_error',
-          'Upstream request failed',
-          'server_error',
-        );
-      }
-      return {
-        statusCode: upstream.status,
-        contentType: request.stream
-          ? (upstream.headers.get('content-type') ?? 'application/json')
-          : 'application/json',
-        body:
-          request.stream && upstream.body
-            ? Readable.fromWeb(upstream.body)
-            : await upstream.json(),
-      };
-    } catch {
-      if (request.signal.aborted) throw request.signal.reason;
-      throw new GatewayError(
-        502,
-        'upstream_error',
-        'Upstream request failed',
-        'server_error',
-      );
-    }
-  };
 }
 
 export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
@@ -149,11 +105,14 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
   });
   app.get('/healthz', async () => ({ ok: true }));
   app.get('/readyz', async () => ({ ready: true }));
-  app.get('/v1/models', async () => ({
-    object: 'list',
-    data: config.models.map((model) => ({ id: model.id, object: 'model' })),
-  }));
-  const dispatch = options.dispatchChat ?? proxyChat(config);
+  const workerDispatch = createWorkerDispatch(config);
+  app.addHook('onClose', async () => {
+    await workerDispatch.close();
+  });
+  app.get('/v1/models', async (request) =>
+    workerDispatch.listModels(request.lifecycle!.signal),
+  );
+  const dispatch = options.dispatchChat ?? workerDispatch.chat;
   app.post('/v1/chat/completions', async (request, reply) => {
     const body = validateChatBody(request.body, config.server.maxMessages);
     const extensions = normalizeExtensions(body, request.headers);
@@ -172,8 +131,15 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
       signal: lifecycle.signal,
       deadlineAt: lifecycle.deadlineAt,
     };
-    const result = await dispatch(gatewayRequest, extensions);
+    const result = await dispatch(
+      gatewayRequest,
+      extensions,
+      typeof request.headers.traceparent === 'string'
+        ? request.headers.traceparent
+        : undefined,
+    );
     lifecycle.signal.throwIfAborted();
+    if (result.headers) reply.headers(result.headers);
     if (result.contentType) reply.type(result.contentType);
     return reply.code(result.statusCode).send(result.body);
   });

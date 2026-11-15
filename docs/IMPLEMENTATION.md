@@ -1,6 +1,6 @@
 # Inference Gateway implementation plan
 
-Status: execution in progress; Phase 2 and Phase 3 exit checks pass. Phase 1's original Node 22 frozen-install check remains unverified. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
+Status: execution in progress; **Phases 1–4 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
 
 This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. The current repository is an initial scaffold; it does not yet satisfy P0. Keep later functionality out of earlier phases unless required to make that phase work.
 
@@ -8,7 +8,7 @@ This plan divides the specification into small deliverables that can be reviewed
 
 Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a gateway proxy, a JSON mock worker, starter YAML configuration and a lockfile.
 
-Phases 1–3 provide compiled shared exports, workspace checks, schema-derived configuration and a tested HTTP request lifecycle. Phase 3 verification passed on an installed Node 22.19.0 runtime, including compiled HTTP startup and JSON proxying. The gateway preserves its own request ID and forwards only the upstream content type; readiness still does not check the worker. The mock worker returns JSON even when streaming is requested. SDK compatibility and complete streaming behavior remain unproven. Phase 1 still lacks its original frozen-install evidence on Node 22.
+Phases 1–4 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici pool adapter for the first configured mock worker. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness still does not check worker health. The gateway explicitly rejects streaming and `auto` until their owning phases implement them; authentication, retries and multi-worker routing are pending.
 
 ## Execution rules
 
@@ -41,6 +41,8 @@ These clarify implementation ambiguities; changes to public behavior should be r
 ## Phase 1 — Make the workspace reproducible
 
 **Depends on:** existing scaffold. **Spec:** sections 3, 10, 12; P0.
+
+**Status:** complete; the remaining Node 22 checks passed during Phase 4 verification.
 
 1. Set Node 22 and pnpm versions in repository metadata; format package manifests and pin dependencies in the lockfile.
 2. Define shared TypeScript configuration and package build order. Export compiled JavaScript and declarations from shared.
@@ -79,6 +81,8 @@ These clarify implementation ambiguities; changes to public behavior should be r
 ## Phase 4 — One-worker adapter and JSON proxy
 
 **Depends on:** 3. **Spec:** sections 7.12; P0.
+
+**Status:** complete; see the Phase 4 completion record for verification and scope.
 
 1. Define adapter request/response and normalized UpstreamError contracts.
 2. Implement an undici Pool for the mock worker, canonical model mapping and upstream header allowlist.
@@ -349,3 +353,27 @@ Verification on Node 22.19.0 with pnpm 10.14.0:
 - `pnpm build`, `pnpm typecheck`, `pnpm lint` and `pnpm format:check`: passed.
 - A temporary Node 22 smoke harness launched `apps/mock-worker/dist/server.js` and `apps/gateway/dist/server.js` on available local ports with an isolated configuration. Observed health success, chat HTTP 200 with the expected JSON content and `x-request-id: compiled-smoke`, and invalid-body HTTP 400 `invalid_request`. Both child processes were stopped after the check.
 - No new dependencies. Health-aware readiness, authentication, model selection, retries, full decision telemetry and complete SSE behavior retain their planned owners in later phases.
+
+### Phase 1 verification follow-up
+
+During Phase 4 verification on Node 22.19.0 and pnpm 10.14.0, `pnpm --store-dir "$HOME/Library/pnpm/store" install --frozen-lockfile --offline` passed using the existing dependency store. Workspace builds passed, and `pnpm test:smoke` successfully started both compiled services and exercised HTTP with the official SDK. These checks close the Node 22 installation/build/startup limitations recorded in the historical Phase 1 progress entry above. Phase 1 is complete.
+
+### Phase 4 completion
+
+Recorded by the commit containing this entry.
+
+- Added gateway-local `WorkerAdapter`, `UpstreamRequest`, `UpstreamResponse` and `UpstreamError` contracts. Failures distinguish connection, timeout, HTTP and response-body errors, preserve upstream HTTP status and expose retry eligibility without performing retries. Client cancellation preserves its original reason.
+- Added `MockWorkerAdapter` with a worker-owned Undici pool: `maxConcurrency` connections, pipelining depth 1, keep-alive, configured connect/header timeouts and abortable I/O. JSON bodies have a 16 MiB bound; HTTP error bodies are destroyed promptly, including bodies that never finish. Redirects are not followed.
+- Resolve registered canonical IDs and aliases before sending the mapped worker model name. Return canonical IDs in chat output and gateway headers; reject unknown models before worker I/O. A registered model absent from the first worker returns 503. Automatic selection and streaming return explicit 400 errors until their owning phases implement support.
+- Strip `gateway` from upstream JSON while preserving remaining inference fields, including unknown output options. Construct an upstream header allowlist with JSON headers, request ID, trace context and worker-configured credentials. Never forward client bearer keys, cookies, gateway headers or SDK metadata. Upstream headers cannot replace gateway IDs or inject cookies.
+- Query the worker's model list and expose only registered canonical IDs with loaded mappings. Implement on-demand JSON health probes returning success and measured latency; readiness integration remains Phase 7 work.
+- Close the pool through the app's close hook. SIGINT/SIGTERM invoke app shutdown; active pool work finishes before connections retire. Bounded/forced drain behavior remains Phase 17 work.
+- Added pinned production dependency `undici@7.30.2`, dev-only `openai@7.57.0`, and a reusable `pnpm test:smoke` command that builds and starts both compiled services with isolated temporary configuration.
+
+Verification on Node 22.19.0 with pnpm 10.14.0:
+
+- Offline frozen-lockfile install passed using the existing pnpm store; manifest and lockfile versions match.
+- `pnpm test`: **125 tests passed** (23 configuration, 67 lifecycle and 35 adapter/SDK tests). Evidence covers official SDK chat/listing/404 errors, aliases and model mapping, payload preservation, request/response header isolation, health probes, HTTP retry classification, malformed/oversized/interrupted bodies, header timeout, aborts before dispatch and during body reads, socket reuse, pool concurrency and close behavior.
+- `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check` and `git diff --check`: passed.
+- `pnpm test:smoke`: compiled SDK chat, model listing, unknown-model rejection and gateway SIGTERM shutdown all passed. Both child processes were stopped and temporary configuration was removed. HTTP tests and the smoke harness run outside the filesystem sandbox because local port binding is denied inside it.
+- Remaining scope: only the first configured mock worker is supported. Real vLLM/Ollama adapters, SSE, health-aware readiness, worker routing, automatic model selection, authentication, retry execution, full tracing and bounded shutdown retain their planned owners.
