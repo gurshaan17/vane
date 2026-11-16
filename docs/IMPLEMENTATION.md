@@ -1,14 +1,14 @@
 # Inference Gateway implementation plan
 
-Status: execution in progress; **Phases 1–5 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
+Status: execution in progress; **Phases 1–6 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
 
-This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. The current repository is an initial scaffold; it does not yet satisfy P0. Keep later functionality out of earlier phases unless required to make that phase work.
+This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. Phases 1–5 deliver the usable P0 path. Keep later functionality out of earlier phases unless required to make that phase work.
 
 ## Current baseline
 
-Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a gateway proxy, a JSON mock worker, starter YAML configuration and a lockfile.
+Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a JSON/SSE gateway proxy, a reproducible mock worker, example configuration and a lockfile.
 
-Phases 1–4 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici pool adapter for the first configured mock worker. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness still does not check worker health. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; authentication, retries and multi-worker routing are pending.
+Phases 1–6 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici pool adapter for the first configured mock worker. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness still does not check worker health. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; authentication, retries and multi-worker routing are pending.
 
 ## Execution rules
 
@@ -107,6 +107,8 @@ These clarify implementation ambiguities; changes to public behavior should be r
 **Exit:** SDK streaming works; slow clients do not cause unbounded buffers; mid-stream faults and disconnects release all resources. Phases 1–5 complete the usable P0 path.
 
 ## Phase 6 — Reproducible mock worker
+
+**Status:** complete; see the Phase 6 completion record below.
 
 **Depends on:** 5. **Spec:** section 7.16.
 
@@ -387,3 +389,11 @@ Implemented mock SSE role/content/finish/optional usage events and terminal `[DO
 The proxy uses async iteration and explicit write/drain handling for backpressure. First-body-byte, idle and client-stall timers complement the existing total deadline and disconnect signal. Heartbeats start after headers and respect pending backpressure. Post-start errors emit one SSE error event without `[DONE]` or retries; stalled/disconnected sockets close immediately. Every exit destroys the upstream body and clears proxy timers/listeners; the request lifecycle remains the single finalization owner, with usage and TTFT in its completion record.
 
 Verification: workspace typecheck, lint, build, full Vitest suite and compiled `pnpm test:smoke` (including official SDK streaming and usage). Tests exercise byte splits, UTF-8, bounded events, missing `[DONE]`, pre-start timeout, idle timeout, stalled clients and disconnects. HTTP checks require loopback binding outside the restricted sandbox. This phase was verified on Node 26.7.0; a Node 22 rerun remains a runtime compatibility check. Multi-worker retries, deterministic mock timing and live worker metrics remain in their planned later phases.
+
+## Phase 6 completion record
+
+The mock worker now separates app construction, simulation contracts/draws and process startup. Validated startup JSON and optional presets configure per-model TTFT, throughput, log-normal jitter, fixed/log-normal/heavy-tail output lengths and seeded error/hang decisions. Canonical request identities exclude transport IDs and gateway hints; draw order does not depend on arrival order. Requests capture settings before queueing. Simulation timing is bounded, output respects token limits, and JSON/SSE text and usage match.
+
+Implemented slowdown and bounded FIFO queue modes, Prometheus running/waiting metrics, deterministic float/base64 embeddings, model listing, opt-in loopback-only GET/POST controls, atomic validation and idle-only reset to startup settings. Faults cover errors, abortable hangs, independent health failures, admission-time degradation windows, inference socket refusal and process exit after N inference requests. Disconnect and shutdown abort timers and queued work; response completion releases capacity exactly once. README documents the settings, presets, reset semantics and synthetic-output limitations; `config/mock-worker.json` provides a runnable example.
+
+Verification includes draw replay/order independence, JSON/SSE parity, strict/atomic controls, preset startup, reset, embeddings, queue saturation, slowdown/degradation, faults, shutdown, real hanging/queued client disconnects, socket refusal and seed snapshots across reconfiguration. All 146 workspace tests, typecheck, lint, formatting, builds and compiled SDK smoke checks passed on Node 26.7.0; Node 22 compatibility remains unverified in this environment. Seeded base draws are reproducible; OS scheduling and load-dependent effects require a matching arrival trace. Process crash invocation is unit-checked through the injected exit callback.

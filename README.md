@@ -121,3 +121,41 @@ curl http://localhost:8080/v1/chat/completions \
 ```
 
 Architecture review and optional feature proposals: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Reproducible mock worker
+
+The default worker preserves the single-chunk echo behavior. Use a preset (`fast-small`, `slow-large`, or `flaky`) or a JSON settings file for simulations:
+
+```sh
+MOCK_PROFILE=fast-small pnpm start:mock
+MOCK_CONFIG=config/mock-worker.json MOCK_ENABLE_CONTROL=1 pnpm start:mock
+```
+
+Settings from `MOCK_CONFIG` override the preset. The worker binds to `127.0.0.1` by default; set `MOCK_HOST` for container networking. `PORT` defaults to 8081. Controls are disabled unless `MOCK_ENABLE_CONTROL=1`, and both control methods require a loopback peer even when another host is configured.
+
+`GET /__control` returns effective settings, running/waiting counts, request/completion/cancellation counts and time since reset. `POST /__control` accepts a strict command:
+
+```json
+{
+  "reset": true,
+  "profile": "fast-small",
+  "settings": {
+    "seed": "benchmark-1",
+    "capacity": 4,
+    "loadMode": "queue",
+    "maxQueue": 100
+  }
+}
+```
+
+Settings updates merge at the top level; `models` replaces the whole model map. Invalid updates leave settings unchanged. Reset restores startup settings, clears counters and restarts the degradation clock, then applies the supplied preset/settings. Reset returns 409 while requests are running or queued. Existing requests retain their captured settings; capacity updates affect queue admission immediately.
+
+Per-model settings are `ttftMs`, `tokensPerSecond`, `jitter` (log-normal timing spread), `outputTokens`, `outputDistribution` (`fixed`, `lognormal`, `heavy-tail`), `errorRate` and `hangRate`. Output lengths are capped at 16,384 simulated tokens and respect `max_tokens`/`max_completion_tokens`. The first simulated token echoes the last message and subsequent tokens are numbered. Usage is synthetic, with approximate prompt counts. JSON and SSE responses produce matching text and usage.
+
+Seeded draws depend on canonical request content, not arrival order, request IDs or gateway hints. Chat streaming options do not change draws. Seeds reproduce base timing, output length and fault decisions; wall-clock scheduling, concurrency slowdown and degradation windows still affect observed latency. For comparable runs, reset to the same seed and replay the same arrival trace.
+
+`loadMode: slowdown` applies `1 + slowdownK * max(0, running - capacity) / capacity`, captured at admission. `loadMode: queue` admits up to capacity, queues up to `maxQueue`, then returns 429. `GET /metrics` exports Prometheus `mock_running_requests`, `mock_waiting_requests`, and request/completed/cancelled totals. Counts remain occupied until the response finishes or the client disconnects. Shutdown aborts running and queued work.
+
+Fault settings include `healthFailure` (503 health probes while inference still works), `refuseConnections` (close inference sockets while controls remain reachable), `crashAfterRequests` (exit code 1 on the Nth accepted inference request), and `degradation: [{ "startMs": 60000, "durationMs": 30000, "multiplier": 5 }]`. Degradation windows are relative to startup/reset and apply at admission. Error/hang probabilities are per model; hangs continue until cancellation or shutdown. These controls are intended for local development and benchmarks.
+
+`POST /v1/embeddings` accepts string or string-array input, `dimensions` (1–4096), and `encoding_format` (`float` or `base64`). It returns stable normalized synthetic vectors and shares capacity, timing and fault behavior with chat. `/v1/models` lists the current model map.

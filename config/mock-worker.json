@@ -1,0 +1,22 @@
+{
+  "seed": "benchmark-1",
+  "models": {
+    "mock-model": {
+      "ttftMs": 20,
+      "tokensPerSecond": 150,
+      "jitter": 0.15,
+      "outputTokens": 32,
+      "outputDistribution": "lognormal",
+      "errorRate": 0,
+      "hangRate": 0
+    }
+  },
+  "capacity": 8,
+  "loadMode": "slowdown",
+  "slowdownK": 1,
+  "maxQueue": 1000,
+  "healthFailure": false,
+  "refuseConnections": false,
+  "crashAfterRequests": null,
+  "degradation": []
+}

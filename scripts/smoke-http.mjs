@@ -132,7 +132,8 @@ try {
     if (chunk.usage) usage = chunk.usage;
   }
   assert.equal(streamed, 'Streaming 😀 smoke');
-  assert.equal(usage.total_tokens, 2);
+  assert.equal(usage.completion_tokens, 1);
+  assert.equal(usage.total_tokens, usage.prompt_tokens + 1);
   assert.deepEqual(
     (await client.models.list()).data.map((model) => model.id),
     ['mock-model'],
