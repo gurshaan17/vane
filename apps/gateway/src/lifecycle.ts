@@ -21,6 +21,8 @@ export interface FinalizedRequest {
   outcome: 'completed' | 'rejected' | 'cancelled' | 'timeout';
   statusCode: number;
   errorCode?: string;
+  ttftMs?: number;
+  usage?: Record<string, unknown>;
   durationMs: number;
 }
 
@@ -30,10 +32,15 @@ export class RequestLifecycle {
   readonly signal: AbortSignal = this.controller.signal;
   deadlineAt: number;
   errorCode?: string;
+  ttftMs?: number;
+  usage?: Record<string, unknown>;
+  streaming = false;
   private done = false;
   private timer?: NodeJS.Timeout;
   private readonly onFinish = () =>
-    this.finalize(this.reply.statusCode >= 400 ? 'rejected' : 'completed');
+    this.finalize(
+      this.errorCode || this.reply.statusCode >= 400 ? 'rejected' : 'completed',
+    );
   private readonly onDisconnect = () => {
     if (!this.reply.raw.writableFinished) this.cancel('cancelled');
   };
@@ -85,7 +92,7 @@ export class RequestLifecycle {
     this.errorCode = error.code;
     this.controller.abort(error);
     this.finalize(outcome);
-    if (outcome === 'timeout') {
+    if (outcome === 'timeout' && !this.streaming) {
       if (!this.reply.raw.headersSent) this.reply.send(error);
       else this.reply.raw.destroy();
     }
@@ -108,6 +115,8 @@ export class RequestLifecycle {
             ? 504
             : this.reply.statusCode,
       errorCode: this.errorCode,
+      ttftMs: this.ttftMs,
+      usage: this.usage,
       durationMs: Date.now() - this.startedAt,
     };
     this.request.log.info(result, 'request finalized');

@@ -47,7 +47,11 @@ export function createWorkerDispatch(config: ResolvedConfig) {
     traceparent,
   ) => {
     const model = resolveModel(request.model);
-    const response = await adapter.chat(
+    const response = await (
+      request.stream
+        ? adapter.chatStream.bind(adapter)
+        : adapter.chat.bind(adapter)
+    )(
       {
         model,
         body: request.body as ChatBody,
@@ -58,7 +62,7 @@ export function createWorkerDispatch(config: ResolvedConfig) {
     );
     return {
       ...response,
-      contentType: 'application/json',
+      contentType: request.stream ? 'text/event-stream' : 'application/json',
       headers: {
         'x-gateway-model': model,
         'x-gateway-worker': worker.id,

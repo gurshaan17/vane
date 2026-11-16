@@ -16,7 +16,15 @@ export interface UpstreamResponse {
   statusCode: number;
   body: Record<string, unknown>;
 }
+export interface UpstreamStream {
+  statusCode: number;
+  body: import('node:stream').Readable;
+}
 export interface WorkerAdapter {
+  chatStream(
+    request: UpstreamRequest,
+    signal: AbortSignal,
+  ): Promise<UpstreamStream>;
   chat(
     request: UpstreamRequest,
     signal: AbortSignal,
@@ -76,9 +84,8 @@ export class MockWorkerAdapter implements WorkerAdapter {
       pipelining: 1,
       connectTimeout: timeouts.connectTimeoutMs,
       headersTimeout: timeouts.firstByteTimeoutMs,
-      // The request's total deadline bounds JSON body reads. SSE idle limits arrive in Phase 5.
+      // JSON uses the total deadline; the streaming proxy owns SSE body timers.
       bodyTimeout: 0,
-      maxResponseSize: 16 * 1024 * 1024,
     });
   }
 
@@ -86,13 +93,14 @@ export class MockWorkerAdapter implements WorkerAdapter {
     path: string,
     signal: AbortSignal,
     request?: UpstreamRequest,
+    streaming = false,
   ) {
     signal.throwIfAborted();
     let receivedHeaders = false;
     try {
       // Construct an allowlist; neither client Authorization nor transport headers enter here.
       const headers: Record<string, string> = {
-        accept: 'application/json',
+        accept: streaming ? 'text/event-stream' : 'application/json',
         traceparent: traceparent(request?.traceparent),
         ...(request?.requestId ? { 'x-request-id': request.requestId } : {}),
         ...(this.worker.apiKey
@@ -127,8 +135,28 @@ export class MockWorkerAdapter implements WorkerAdapter {
           response.statusCode,
         );
       }
+      if (streaming) {
+        if (
+          !String(response.headers['content-type']).startsWith(
+            'text/event-stream',
+          )
+        ) {
+          response.body.destroy();
+          throw new UpstreamError('stream', false);
+        }
+        return { statusCode: response.statusCode, body: response.body };
+      }
       try {
-        const body = await response.body.json();
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+          size += chunk.length;
+          if (size > 16 * 1024 * 1024) throw new UpstreamError('stream', false);
+          chunks.push(chunk);
+        }
+        const body: unknown = JSON.parse(
+          Buffer.concat(chunks).toString('utf8'),
+        );
         return { statusCode: response.statusCode, body };
       } finally {
         if (!response.body.readableEnded) response.body.destroy();
@@ -156,6 +184,25 @@ export class MockWorkerAdapter implements WorkerAdapter {
         ].includes(code ?? ''),
       );
     }
+  }
+
+  async chatStream(
+    request: UpstreamRequest,
+    signal: AbortSignal,
+  ): Promise<UpstreamStream> {
+    if (!Object.hasOwn(this.worker.models, request.model))
+      throw new GatewayError(
+        503,
+        'no_healthy_worker',
+        'The configured worker does not serve this model',
+        'server_error',
+      );
+    return (await this.request(
+      '/v1/chat/completions',
+      signal,
+      request,
+      true,
+    )) as UpstreamStream;
   }
 
   async chat(

@@ -1,6 +1,6 @@
 # Inference Gateway implementation plan
 
-Status: execution in progress; **Phases 1–4 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
+Status: execution in progress; **Phases 1–5 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
 
 This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. The current repository is an initial scaffold; it does not yet satisfy P0. Keep later functionality out of earlier phases unless required to make that phase work.
 
@@ -8,7 +8,7 @@ This plan divides the specification into small deliverables that can be reviewed
 
 Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a gateway proxy, a JSON mock worker, starter YAML configuration and a lockfile.
 
-Phases 1–4 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici pool adapter for the first configured mock worker. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness still does not check worker health. The gateway explicitly rejects streaming and `auto` until their owning phases implement them; authentication, retries and multi-worker routing are pending.
+Phases 1–4 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici pool adapter for the first configured mock worker. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness still does not check worker health. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; authentication, retries and multi-worker routing are pending.
 
 ## Execution rules
 
@@ -93,6 +93,8 @@ These clarify implementation ambiguities; changes to public behavior should be r
 **Exit:** official OpenAI client completes JSON chat and model listing against the gateway; unknown models return clear errors.
 
 ## Phase 5 — Streaming proxy
+
+**Status:** complete; see the Phase 5 completion record below.
 
 **Depends on:** 4. **Spec:** sections 6.5, 7.11.
 
@@ -377,3 +379,11 @@ Verification on Node 22.19.0 with pnpm 10.14.0:
 - `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check` and `git diff --check`: passed.
 - `pnpm test:smoke`: compiled SDK chat, model listing, unknown-model rejection and gateway SIGTERM shutdown all passed. Both child processes were stopped and temporary configuration was removed. HTTP tests and the smoke harness run outside the filesystem sandbox because local port binding is denied inside it.
 - Remaining scope: only the first configured mock worker is supported. Real vLLM/Ollama adapters, SSE, health-aware readiness, worker routing, automatic model selection, authentication, retry execution, full tracing and bounded shutdown retain their planned owners.
+
+## Phase 5 completion record
+
+Implemented mock SSE role/content/finish/optional usage events and terminal `[DONE]`, plus the adapter streaming contract and gateway forwarding path. Headers wait for the first upstream body bytes. Forwarded bytes are unchanged; incremental UTF-8 inspection recognizes split SSE boundaries, captures usage/TTFT, requires `[DONE]`, and caps incomplete events at 1 MiB. JSON responses retain their independent 16 MiB limit; streaming has no total response-size cap.
+
+The proxy uses async iteration and explicit write/drain handling for backpressure. First-body-byte, idle and client-stall timers complement the existing total deadline and disconnect signal. Heartbeats start after headers and respect pending backpressure. Post-start errors emit one SSE error event without `[DONE]` or retries; stalled/disconnected sockets close immediately. Every exit destroys the upstream body and clears proxy timers/listeners; the request lifecycle remains the single finalization owner, with usage and TTFT in its completion record.
+
+Verification: workspace typecheck, lint, build, full Vitest suite and compiled `pnpm test:smoke` (including official SDK streaming and usage). Tests exercise byte splits, UTF-8, bounded events, missing `[DONE]`, pre-start timeout, idle timeout, stalled clients and disconnects. HTTP checks require loopback binding outside the restricted sandbox. This phase was verified on Node 26.7.0; a Node 22 rerun remains a runtime compatibility check. Multi-worker retries, deterministic mock timing and live worker metrics remain in their planned later phases.

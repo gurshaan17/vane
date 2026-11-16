@@ -119,6 +119,20 @@ try {
   assert.equal(data.model, 'mock-model');
   assert.equal(response.headers.get('x-request-id'), 'compiled-sdk-smoke');
   assert.equal(response.headers.get('x-gateway-worker'), 'mock-1');
+  let streamed = '';
+  let usage;
+  const stream = await client.chat.completions.create({
+    model: 'mock-model',
+    messages: [{ role: 'user', content: 'Streaming 😀 smoke' }],
+    stream: true,
+    stream_options: { include_usage: true },
+  });
+  for await (const chunk of stream) {
+    streamed += chunk.choices[0]?.delta.content ?? '';
+    if (chunk.usage) usage = chunk.usage;
+  }
+  assert.equal(streamed, 'Streaming 😀 smoke');
+  assert.equal(usage.total_tokens, 2);
   assert.deepEqual(
     (await client.models.list()).data.map((model) => model.id),
     ['mock-model'],
@@ -135,6 +149,7 @@ try {
     JSON.stringify({
       node: process.version,
       compiledChat: 'passed',
+      compiledStreaming: 'passed',
       compiledModels: 'passed',
       unknownModel: 'passed',
       gracefulShutdown: 'passed',

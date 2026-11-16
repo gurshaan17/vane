@@ -86,7 +86,7 @@ Optional extensions use `gateway: { priority, task, cache, timeoutMs, routing }`
 
 The deadline starts before body parsing. A timeout extension can shorten it but cannot extend it; timeout headers also cover stalled uploads. The same abort signal reaches upstream I/O and response reads. Disconnects abort outstanding work. One finalizer clears the deadline timer and disconnect/finish listeners, logs the terminal outcome and calls the optional completion observer once.
 
-Every parsed HTTP request returns `x-request-id`. Inbound IDs must match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`; other values are replaced with a UUID v7. Errors contain `error: { message, type, code, request_id }`, including JSON parsing and limit failures. HTTP parser failures before Fastify creates a request also receive an error envelope and a generated ID. Admission and cache response headers arrive with their owning phases. The default adapter rejects `stream: true` with 400 until Phase 5 implements SSE handling.
+Every parsed HTTP request returns `x-request-id`. Inbound IDs must match `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`; other values are replaced with a UUID v7. Errors contain `error: { message, type, code, request_id }`, including JSON parsing and limit failures. HTTP parser failures before Fastify creates a request also receive an error envelope and a generated ID. Admission and cache response headers arrive with their owning phases. The mock adapter supports `stream: true` with SSE role/content chunks and `[DONE]`; set `stream_options.include_usage` to request a usage chunk.
 
 ## One-worker JSON adapter
 
@@ -110,7 +110,7 @@ The adapter removes the `gateway` body field and preserves other inference field
 | `pnpm test`         | Run configuration and HTTP lifecycle tests           |
 | `pnpm test:smoke`   | Build and test compiled services with the OpenAI SDK |
 
-The current tests cover configuration, lifecycle behavior, SDK JSON compatibility, model mapping, safe forwarding, error classification, keep-alive reuse and cancellation/cleanup. HTTP tests bind temporary loopback ports. `pnpm test:smoke` starts both compiled services on available local ports with temporary configuration, checks SDK chat/model listing and unknown-model errors, then verifies gateway SIGTERM shutdown and removes its temporary files. Complete streaming checks belong to Phase 5.
+The current tests cover configuration, lifecycle behavior, SDK JSON compatibility, model mapping, safe forwarding, error classification, keep-alive reuse and cancellation/cleanup. HTTP tests bind temporary loopback ports. `pnpm test:smoke` starts both compiled services on available local ports with temporary configuration, checks SDK chat/model listing and unknown-model errors, then verifies gateway SIGTERM shutdown and removes its temporary files. Streaming tests cover split UTF-8/SSE boundaries, bounded inspection, missing terminal markers, cancellation, backpressure and timeouts. The compiled smoke check also verifies SDK streaming and usage.
 
 Example JSON request:
 

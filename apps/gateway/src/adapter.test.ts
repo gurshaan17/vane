@@ -307,20 +307,6 @@ describe('one-worker JSON adapter and SDK compatibility', () => {
       requests.every((req) => typeof req.headers.traceparent === 'string'),
     ).toBe(true);
   });
-
-  it('rejects streaming explicitly until Phase 5', async () => {
-    const { config, requests } = await fixture();
-    const app = createApp(config);
-    closers.push(() => app.close());
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/chat/completions',
-      payload: { ...payload, stream: true },
-    });
-    expect(response.statusCode).toBe(400);
-    expect(response.json().error.code).toBe('invalid_request');
-    expect(requests).toHaveLength(0);
-  });
 });
 
 describe('normalized upstream errors', () => {

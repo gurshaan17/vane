@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+import { proxyStream } from './streaming.js';
 import Fastify from 'fastify';
 import type { GatewayRequest, RequestExtensions } from '@gateway/shared';
 import type { ResolvedConfig } from './config.js';
@@ -131,6 +133,7 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
       signal: lifecycle.signal,
       deadlineAt: lifecycle.deadlineAt,
     };
+    lifecycle.streaming = gatewayRequest.stream;
     const result = await dispatch(
       gatewayRequest,
       extensions,
@@ -139,6 +142,10 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
         : undefined,
     );
     lifecycle.signal.throwIfAborted();
+    if (gatewayRequest.stream && result.body instanceof Readable) {
+      await proxyStream(result.body, reply, lifecycle, config, result.headers);
+      return reply;
+    }
     if (result.headers) reply.headers(result.headers);
     if (result.contentType) reply.type(result.contentType);
     return reply.code(result.statusCode).send(result.body);
