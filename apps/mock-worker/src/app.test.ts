@@ -164,7 +164,8 @@ it('enforces queue capacity and rejects resets while work is active', async () =
       capacity: 1,
       loadMode: 'queue',
       maxQueue: 1,
-      models: { 'mock-model': { ttftMs: 60 } },
+      // Keep work active while asynchronous queue assertions run under suite load.
+      models: { 'mock-model': { ttftMs: 1000 } },
     },
   });
   const first = chat(app).then((result) => result);

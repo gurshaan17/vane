@@ -1,6 +1,6 @@
 # Inference Gateway implementation plan
 
-Status: execution in progress; **Phases 1–6 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
+Status: execution in progress; **Phases 1–7 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
 
 This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. Phases 1–5 deliver the usable P0 path. Keep later functionality out of earlier phases unless required to make that phase work.
 
@@ -8,7 +8,7 @@ This plan divides the specification into small deliverables that can be reviewed
 
 Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a JSON/SSE gateway proxy, a reproducible mock worker, example configuration and a lockfile.
 
-Phases 1–6 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici pool adapter for the first configured mock worker. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness still does not check worker health. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; authentication, retries and multi-worker routing are pending.
+Phases 1–6 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici adapters and a probed worker registry. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness now requires an eligible worker with a configured loaded model. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; authentication, retries and multi-worker routing are pending.
 
 ## Execution rules
 
@@ -121,6 +121,8 @@ These clarify implementation ambiguities; changes to public behavior should be r
 **Exit:** a recorded seed/control sequence reproduces draws; hanging work can be aborted; control APIs remain local to development/benchmark environments.
 
 ## Phase 7 — Worker registry and health
+
+**Status:** complete; see the Phase 7 completion record below.
 
 **Depends on:** 4, 6. **Spec:** section 7.8; P1.
 
@@ -397,3 +399,13 @@ The mock worker now separates app construction, simulation contracts/draws and p
 Implemented slowdown and bounded FIFO queue modes, Prometheus running/waiting metrics, deterministic float/base64 embeddings, model listing, opt-in loopback-only GET/POST controls, atomic validation and idle-only reset to startup settings. Faults cover errors, abortable hangs, independent health failures, admission-time degradation windows, inference socket refusal and process exit after N inference requests. Disconnect and shutdown abort timers and queued work; response completion releases capacity exactly once. README documents the settings, presets, reset semantics and synthetic-output limitations; `config/mock-worker.json` provides a runnable example.
 
 Verification includes draw replay/order independence, JSON/SSE parity, strict/atomic controls, preset startup, reset, embeddings, queue saturation, slowdown/degradation, faults, shutdown, real hanging/queued client disconnects, socket refusal and seed snapshots across reconfiguration. All 146 workspace tests, typecheck, lint, formatting, builds and compiled SDK smoke checks passed on Node 26.7.0; Node 22 compatibility remains unverified in this environment. Seeded base draws are reproducible; OS scheduling and load-dependent effects require a matching arrival trace. Process crash invocation is unit-checked through the injected exit callback.
+
+## Phase 7 completion record
+
+Implemented a registry with per-worker configuration, adapters and mutable WorkerState, initially unavailable. Startup performs a bounded health/model probe pass. Subsequent probes have jitter, per-worker non-overlap, a shared abort deadline, optional queue-depth scraping and explicit failure/recovery transitions. Separate probe pools prevent inference saturation from starving health monitoring. Loaded-model eligibility excludes unhealthy/draining workers; degraded workers remain eligible. Until Phase 8, chat uses the first eligible configured worker. Model listing uses the registry snapshot; readiness returns 503 when no configured loaded model is available or shutdown has begun.
+
+A guarded dispatch reservation is released by the existing request finalization owner through JSON/SSE completion, error, deadline and disconnect. Pre-response adapter failures also release through the same guard. Outcomes update a bounded 50-request/60-second error window and configurable-alpha latency/TTFT EWMAs; client cancellation is excluded and upstream 4xx is non-failing. Raw stream interruptions normalize to upstream errors for passive accounting. Shutdown drains all workers, cancels and joins probe work, stops timers and closes inference/probe pools after active work.
+
+Added unit checks for initial availability, transitions, slow probes, optional metrics, model removal, independent workers, EWMA/window expiry, exactly-once release, jitter, overlapping/hanging probes and cleanup. HTTP checks cover readiness, unavailable dispatch, streaming completion and disconnect release. Updated prior proxy fixtures to advertise health/models and changed unavailable-worker expectations to 503. A pre-existing mock queue test exposed a short wall-clock race under suite load; its simulated work now lasts long enough for asynchronous admission assertions.
+
+Verification: full workspace tests, typecheck, lint, formatting, build and compiled SDK smoke checks. Runtime: Node 26.7.0; Node 22 remains unverified. Non-mock backend adapters, routing algorithms, breakers, public drain/admin endpoints and forced shutdown remain in their assigned later phases.

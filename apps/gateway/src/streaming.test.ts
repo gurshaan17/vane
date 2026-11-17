@@ -31,6 +31,8 @@ async function fixture(
   overrides: { first?: number; idle?: number } = {},
 ) {
   const worker = Fastify();
+  worker.get('/health', async () => ({ ok: true }));
+  worker.get('/v1/models', async () => ({ data: [{ id: 'mock-model' }] }));
   worker.post('/v1/chat/completions', (_req, reply) =>
     reply.type('text/event-stream').send(source()),
   );
@@ -65,6 +67,7 @@ it('forwards bytes and finalizes usage exactly once', async () => {
   expect(reply.statusCode).toBe(200);
   expect(reply.headers['x-accel-buffering']).toBe('no');
   expect(reply.body).toBe(bytes);
+  expect(app.workerRegistry.entries.get('mock-1')!.state.inFlight).toBe(0);
   expect(results).toHaveLength(1);
   expect(results[0]).toMatchObject({
     outcome: 'completed',
@@ -78,6 +81,7 @@ it('emits one error event when EOF lacks DONE', async () => {
   expect(reply.statusCode).toBe(200);
   expect(reply.body.match(/event: error/g)).toHaveLength(1);
   expect(reply.body).not.toContain('[DONE]');
+  expect(app.workerRegistry.entries.get('mock-1')!.state.inFlight).toBe(0);
   expect(results).toHaveLength(1);
   expect(results[0]).toMatchObject({ outcome: 'rejected' });
 });
@@ -165,4 +169,9 @@ it('releases upstream work on client cancellation', async () => {
   await reader.read();
   controller.abort();
   await expect(reader.read()).rejects.toThrow();
+  const { vi } = await import('vitest');
+  await vi.waitFor(() =>
+    expect(app.workerRegistry.entries.get('mock-1')!.state.inFlight).toBe(0),
+  );
+  expect(app.workerRegistry.entries.get('mock-1')!.state.sampleCount).toBe(0);
 });

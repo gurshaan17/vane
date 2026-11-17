@@ -5,7 +5,7 @@ import type { FastifyReply } from 'fastify';
 import type { ResolvedConfig } from './config.js';
 import type { RequestLifecycle } from './lifecycle.js';
 import { UpstreamError } from './adapter.js';
-import { errorBody, normalizeError } from './errors.js';
+import { errorBody, normalizeError, GatewayError } from './errors.js';
 
 /** Bounded side inspection. Forwarded bytes remain untouched, including UTF-8 splits. */
 export class SSEInspector {
@@ -131,8 +131,11 @@ export async function proxyStream(
     if (!inspector.done) throw new UpstreamError('stream', false);
     reply.raw.end();
   } catch (error) {
+    const cause = controller.signal.aborted ? controller.signal.reason : error;
     const failure = normalizeError(
-      controller.signal.aborted ? controller.signal.reason : error,
+      cause instanceof GatewayError
+        ? cause
+        : new UpstreamError('stream', false),
     );
     lifecycle.errorCode = failure.code;
     if (!reply.raw.headersSent) throw failure;

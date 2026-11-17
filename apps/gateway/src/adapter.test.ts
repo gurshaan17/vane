@@ -215,7 +215,9 @@ describe('one-worker JSON adapter and SDK compatibility', () => {
         request_id: response.headers['x-request-id'],
       });
     }
-    expect(requests).toHaveLength(0);
+    expect(
+      requests.filter((request) => request.url === '/v1/chat/completions'),
+    ).toHaveLength(0);
   });
 
   it('exposes unknown-model errors through the official SDK', async () => {
@@ -418,8 +420,9 @@ describe('normalized upstream errors', () => {
     const app = createApp(config);
     closers.push(() => app.close());
     const response = await app.inject('/v1/models');
-    expect(response.statusCode).toBe(502);
-    expect(response.json().error.code).toBe('upstream_error');
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toEqual([]);
+    expect((await app.inject('/readyz')).statusCode).toBe(503);
   });
 });
 
@@ -454,7 +457,9 @@ describe('pool ownership and cancellation', () => {
           ? chat(adapter, abort.signal)
           : adapter[method](abort.signal);
       await expect(result).rejects.toBe(reason);
-      expect(requests).toHaveLength(0);
+      expect(
+        requests.filter((request) => request.url === '/v1/chat/completions'),
+      ).toHaveLength(0);
     },
   );
 

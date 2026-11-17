@@ -13,6 +13,9 @@ import { normalizeExtensions, validateChatBody } from './validation.js';
 import { createWorkerDispatch } from './dispatch.js';
 
 declare module 'fastify' {
+  interface FastifyInstance {
+    workerRegistry: import('./registry.js').WorkerRegistry;
+  }
   interface FastifyRequest {
     lifecycle: RequestLifecycle | null;
   }
@@ -22,6 +25,7 @@ export type ChatDispatch = (
   request: GatewayRequest,
   extensions: RequestExtensions,
   traceparent?: string,
+  onDispatch?: (release: (result: FinalizedRequest) => void) => void,
 ) => Promise<{
   statusCode: number;
   body: unknown;
@@ -106,8 +110,19 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
     reply.send(new GatewayError(404, 'not_found', 'Route not found'));
   });
   app.get('/healthz', async () => ({ ok: true }));
-  app.get('/readyz', async () => ({ ready: true }));
+
   const workerDispatch = createWorkerDispatch(config);
+  app.decorate('workerRegistry', workerDispatch.registry);
+  app.addHook('onReady', async () => {
+    await workerDispatch.registry.start();
+  });
+  app.addHook('preClose', async () => {
+    workerDispatch.registry.stop();
+  });
+  app.get('/readyz', async (_request, reply) => {
+    const ready = workerDispatch.registry.ready;
+    return reply.code(ready ? 200 : 503).send({ ready });
+  });
   app.addHook('onClose', async () => {
     await workerDispatch.close();
   });
@@ -140,6 +155,7 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
       typeof request.headers.traceparent === 'string'
         ? request.headers.traceparent
         : undefined,
+      (callback) => lifecycle.addFinalizer(callback),
     );
     lifecycle.signal.throwIfAborted();
     if (gatewayRequest.stream && result.body instanceof Readable) {

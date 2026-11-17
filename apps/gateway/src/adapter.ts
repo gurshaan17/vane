@@ -31,6 +31,7 @@ export interface WorkerAdapter {
   ): Promise<UpstreamResponse>;
   listModels(signal: AbortSignal): Promise<string[]>;
   health(signal: AbortSignal): Promise<{ ok: boolean; latencyMs: number }>;
+  metrics?(signal: AbortSignal): Promise<{ queueDepth?: number }>;
   close(): Promise<void>;
 }
 
@@ -67,6 +68,7 @@ const modelList = z.object({
 /** OpenAI-compatible transport for the mock worker; one keep-alive pool per worker. */
 export class MockWorkerAdapter implements WorkerAdapter {
   private readonly pool: Pool;
+  private readonly probePool: Pool;
   private readonly basePath: string;
   private closing?: Promise<void>;
 
@@ -79,6 +81,12 @@ export class MockWorkerAdapter implements WorkerAdapter {
   ) {
     const url = new URL(worker.baseUrl);
     this.basePath = url.pathname.replace(/\/+$/, '');
+    this.probePool = new Pool(url.origin, {
+      connections: 2,
+      pipelining: 1,
+      connectTimeout: timeouts.connectTimeoutMs,
+      bodyTimeout: 0,
+    });
     this.pool = new Pool(url.origin, {
       connections: worker.maxConcurrency,
       pipelining: 1,
@@ -94,6 +102,7 @@ export class MockWorkerAdapter implements WorkerAdapter {
     signal: AbortSignal,
     request?: UpstreamRequest,
     streaming = false,
+    text = false,
   ) {
     signal.throwIfAborted();
     let receivedHeaders = false;
@@ -115,7 +124,7 @@ export class MockWorkerAdapter implements WorkerAdapter {
         body = JSON.stringify(payload);
         headers['content-type'] = 'application/json';
       }
-      const response = await this.pool.request({
+      const response = await (request ? this.pool : this.probePool).request({
         path: `${this.basePath}${path}`,
         method: request ? 'POST' : 'GET',
         headers,
@@ -154,9 +163,8 @@ export class MockWorkerAdapter implements WorkerAdapter {
           if (size > 16 * 1024 * 1024) throw new UpstreamError('stream', false);
           chunks.push(chunk);
         }
-        const body: unknown = JSON.parse(
-          Buffer.concat(chunks).toString('utf8'),
-        );
+        const value = Buffer.concat(chunks).toString('utf8');
+        const body: unknown = text ? value : JSON.parse(value);
         return { statusCode: response.statusCode, body };
       } finally {
         if (!response.body.readableEnded) response.body.destroy();
@@ -258,7 +266,27 @@ export class MockWorkerAdapter implements WorkerAdapter {
     }
   }
 
+  async metrics(signal: AbortSignal) {
+    const response = await this.request(
+      '/metrics',
+      signal,
+      undefined,
+      false,
+      true,
+    );
+    const match = /^mock_waiting_requests\s+(\d+)\s*$/m.exec(
+      String(response.body),
+    );
+    const queueDepth = match ? Number(match[1]) : undefined;
+    return {
+      queueDepth: Number.isSafeInteger(queueDepth) ? queueDepth : undefined,
+    };
+  }
+
   close(): Promise<void> {
-    return (this.closing ??= this.pool.close());
+    return (this.closing ??= Promise.all([
+      this.pool.close(),
+      this.probePool.close(),
+    ]).then(() => undefined));
   }
 }

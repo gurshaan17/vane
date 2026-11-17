@@ -36,6 +36,12 @@ export class RequestLifecycle {
   usage?: Record<string, unknown>;
   streaming = false;
   private done = false;
+  private result?: FinalizedRequest;
+  private finalizers: Array<(result: FinalizedRequest) => void> = [];
+  addFinalizer(callback: (result: FinalizedRequest) => void) {
+    if (this.result) callback(this.result);
+    else this.finalizers.push(callback);
+  }
   private timer?: NodeJS.Timeout;
   private readonly onFinish = () =>
     this.finalize(
@@ -119,6 +125,8 @@ export class RequestLifecycle {
       usage: this.usage,
       durationMs: Date.now() - this.startedAt,
     };
+    this.result = result;
+    for (const callback of this.finalizers.splice(0)) callback(result);
     this.request.log.info(result, 'request finalized');
     this.onFinalize?.(result);
   }

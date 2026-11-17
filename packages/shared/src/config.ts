@@ -153,6 +153,9 @@ export const gatewayConfigSchema = z
     health: z
       .object({
         probeIntervalMs: integer.default(5000),
+        probeTimeoutMs: integer.default(1000),
+        degradedLatencyMs: integer.default(1000),
+        ewmaAlpha: positive.max(1).default(0.2),
         unhealthyAfterFailures: integer.default(3),
         recoverAfterSuccesses: integer.default(2),
         degradedErrorRate: fraction.default(0.2),

@@ -632,6 +632,8 @@ describe('real HTTP boundaries', () => {
   });
   it('proxies real JSON and keeps the gateway request ID authoritative', async () => {
     const worker = Fastify();
+    worker.get('/health', async () => ({ ok: true }));
+    worker.get('/v1/models', async () => ({ data: [{ id: 'mock-model' }] }));
     apps.push(worker as ReturnType<typeof createApp>);
     worker.post('/v1/chat/completions', async (request, reply) => {
       reply.header('x-request-id', 'worker-id');
@@ -662,6 +664,8 @@ describe('real HTTP boundaries', () => {
 describe('proxy cancellation and failures', () => {
   it('propagates deadline cancellation through fetch to the worker connection', async () => {
     const worker = Fastify();
+    worker.get('/health', async () => ({ ok: true }));
+    worker.get('/v1/models', async () => ({ data: [{ id: 'mock-model' }] }));
     apps.push(worker as ReturnType<typeof createApp>);
     let disconnected = false;
     worker.post('/v1/chat/completions', async (_request, reply) => {
@@ -691,6 +695,7 @@ describe('proxy cancellation and failures', () => {
       'upstream_timeout',
     );
     await vi.waitFor(() => expect(disconnected).toBe(true));
+    expect(app.workerRegistry.entries.get('mock-1')!.state.inFlight).toBe(0);
     expect(finalized).toMatchObject([
       { outcome: 'timeout', errorCode: 'upstream_timeout' },
     ]);
@@ -702,6 +707,10 @@ describe('proxy cancellation and failures', () => {
       const settings = config();
       if (failure !== 'connection') {
         const worker = Fastify();
+        worker.get('/health', async () => ({ ok: true }));
+        worker.get('/v1/models', async () => ({
+          data: [{ id: 'mock-model' }],
+        }));
         apps.push(worker as ReturnType<typeof createApp>);
         worker.post('/v1/chat/completions', async (_request, reply) => {
           return reply
@@ -721,7 +730,11 @@ describe('proxy cancellation and failures', () => {
         url: '/v1/chat/completions',
         payload,
       });
-      checkError(response, 502, 'upstream_error');
+      checkError(
+        response,
+        failure === 'connection' ? 503 : 502,
+        failure === 'connection' ? 'no_healthy_worker' : 'upstream_error',
+      );
       expect(response.body).not.toContain('private upstream error');
     },
   );
