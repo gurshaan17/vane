@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+import { retryAfter } from './retry.js';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { Pool } from 'undici';
@@ -40,6 +42,7 @@ export class UpstreamError extends GatewayError {
     public readonly kind: 'connect' | 'timeout' | 'http' | 'stream',
     public readonly retryable: boolean,
     public readonly status?: number,
+    public readonly retryAfterMs?: number,
   ) {
     super(
       kind === 'timeout' ? 504 : 502,
@@ -71,6 +74,7 @@ export class MockWorkerAdapter implements WorkerAdapter {
   private readonly probePool: Pool;
   private readonly basePath: string;
   private closing?: Promise<void>;
+  private readonly firstByteTimeoutMs: number;
 
   constructor(
     private readonly worker: ResolvedConfig['workers'][number],
@@ -79,6 +83,7 @@ export class MockWorkerAdapter implements WorkerAdapter {
       'connectTimeoutMs' | 'firstByteTimeoutMs'
     >,
   ) {
+    this.firstByteTimeoutMs = timeouts.firstByteTimeoutMs;
     const url = new URL(worker.baseUrl);
     this.basePath = url.pathname.replace(/\/+$/, '');
     this.probePool = new Pool(url.origin, {
@@ -106,6 +111,13 @@ export class MockWorkerAdapter implements WorkerAdapter {
   ) {
     signal.throwIfAborted();
     let receivedHeaders = false;
+    const timeout = new AbortController();
+    const timer = setTimeout(
+      () => timeout.abort(new UpstreamError('timeout', true)),
+      this.firstByteTimeoutMs,
+    );
+    timer.unref();
+    const attemptSignal = AbortSignal.any([signal, timeout.signal]);
     try {
       // Construct an allowlist; neither client Authorization nor transport headers enter here.
       const headers: Record<string, string> = {
@@ -129,7 +141,7 @@ export class MockWorkerAdapter implements WorkerAdapter {
         method: request ? 'POST' : 'GET',
         headers,
         body,
-        signal,
+        signal: attemptSignal,
         // No redirect following: worker credentials must stay on the configured origin.
       });
       receivedHeaders = true;
@@ -142,6 +154,7 @@ export class MockWorkerAdapter implements WorkerAdapter {
           'http',
           [429, 502, 503, 504].includes(response.statusCode),
           response.statusCode,
+          retryAfter(response.headers['retry-after']),
         );
       }
       if (streaming) {
@@ -153,12 +166,31 @@ export class MockWorkerAdapter implements WorkerAdapter {
           response.body.destroy();
           throw new UpstreamError('stream', false);
         }
-        return { statusCode: response.statusCode, body: response.body };
+        const iterator = response.body[Symbol.asyncIterator]();
+        const first = await iterator.next();
+        clearTimeout(timer);
+        if (first.done) throw new UpstreamError('stream', false);
+        const source = response.body;
+        const body = new Readable({
+          read() {
+            void iterator.next().then(
+              (next) => this.push(next.done ? null : next.value),
+              (error) => this.destroy(error),
+            );
+          },
+          destroy(error, callback) {
+            source.destroy();
+            callback(error);
+          },
+        });
+        body.push(first.value);
+        return { statusCode: response.statusCode, body };
       }
       try {
         const chunks: Buffer[] = [];
         let size = 0;
         for await (const chunk of response.body) {
+          clearTimeout(timer);
           size += chunk.length;
           if (size > 16 * 1024 * 1024) throw new UpstreamError('stream', false);
           chunks.push(chunk);
@@ -171,6 +203,7 @@ export class MockWorkerAdapter implements WorkerAdapter {
       }
     } catch (error) {
       if (signal.aborted) throw signal.reason;
+      if (timeout.signal.aborted) throw timeout.signal.reason;
       if (error instanceof UpstreamError) throw error;
       const code = (error as { code?: string })?.code;
       if (
@@ -191,6 +224,8 @@ export class MockWorkerAdapter implements WorkerAdapter {
           'UND_ERR_SOCKET',
         ].includes(code ?? ''),
       );
+    } finally {
+      clearTimeout(timer);
     }
   }
 

@@ -1,6 +1,6 @@
 # Inference Gateway implementation plan
 
-Status: execution in progress; **Phases 1–8 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
+Status: execution in progress; **Phases 1–9 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
 
 This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. Phases 1–5 deliver the usable P0 path. Keep later functionality out of earlier phases unless required to make that phase work.
 
@@ -8,7 +8,7 @@ This plan divides the specification into small deliverables that can be reviewed
 
 Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a JSON/SSE gateway proxy, a reproducible mock worker, example configuration and a lockfile.
 
-Phases 1–6 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici adapters and a probed worker registry. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness now requires an eligible worker with a configured loaded model. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; baseline multi-worker routing is implemented; authentication, retries and adaptive routing are pending.
+Phases 1–6 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici adapters and a probed worker registry. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness now requires an eligible worker with a configured loaded model. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; baseline multi-worker routing is implemented; bounded retries are implemented; authentication and adaptive routing are pending.
 
 ## Execution rules
 
@@ -149,6 +149,8 @@ These clarify implementation ambiguities; changes to public behavior should be r
 **Exit:** traffic distributes as defined; property checks never select excluded workers; independent models do not corrupt round-robin cursors.
 
 ## Phase 9 — Timeouts and bounded retries
+
+**Status:** complete; see the Phase 9 completion record below.
 
 **Depends on:** 5, 8. **Spec:** section 7.10; P2.
 
@@ -419,3 +421,13 @@ Implemented RoutingStrategy-compatible round-robin (independent canonical-model 
 Dispatch uses the configured strategy or normalized request override, reports x-gateway-routing, and attaches canonical model/worker/strategy to the request DecisionRecord. Finalization records status, attempts, latency, TTFT and usage. Rejected selections retain zero attempts and no chosen worker. The provisional default is least_in_flight; explicit adaptive remains unsupported until Phase 18. Request overrides are available in the existing unauthenticated development gateway; Phase 14 will enforce bench-role permissions. Queueing and retry behavior remain in Phases 11 and 9 respectively.
 
 Verification: 164 tests pass, including per-model cursor isolation, injected random tie resolution, distinct two-worker sampling, shared exclusions across every strategy, synchronous capacity reservation, guarded release, breaker trial rejection, cancellation and 200 reproducible generated worker-state cases. A two-worker HTTP test verifies round-robin distribution, alias canonicalization, request overrides, decision records, concurrent saturation and drained-worker exclusion. Workspace typecheck, lint, formatting, builds and compiled SDK smoke checks pass on Node 26.7.0; Node 22 remains unverified in this environment.
+
+## Phase 9 completion record
+
+Implemented per-attempt first-body-byte deadlines in the adapter, alongside existing connect, stream-idle and total request limits. Streaming attempts prime one body chunk before returning, preserving bytes and backpressure while allowing silent-body failures to retry before client headers. Stream destruction immediately destroys upstream I/O, including when a read is pending. JSON first-byte waits use the same timer; subsequent body completion remains bounded by the total request deadline.
+
+Dispatch retries eligible normalized failures within maxAttempts, always excluding tried workers. Each attempt has a guarded release and independent worker outcome; client cancellations and upstream 4xx remain non-failing for worker statistics. Actual attempt counts and final worker selection reach response headers and DecisionRecord. Exhaustion returns the last upstream failure, not a misleading new routing error. No retry path exists after streaming begins.
+
+Added abortable exponential full-jitter backoff (50ms base, 500ms cap), seconds/date Retry-After handling and deadline checks. Retry-After waits over 500ms skip retry rather than retrying early. A rolling shared retry budget allows max(minRetries, floor(originalRequests \* ratio)) attempts beyond originals per window; the documented default minimum is one retry per 10-second window at low traffic. Reservation and budget consumption happen synchronously before actual retry dispatch.
+
+Verification covers budget/window expiry, jitter bounds, Retry-After parsing/wait bounds, backoff cancellation, retryable status/transport failures, silent JSON/SSE body timeouts, non-retryable HTTP statuses, maxAttempts, total deadlines, stream-start safety, per-attempt worker accounting and cleanup. Full workspace tests, typecheck, lint, formatting, builds and compiled SDK smoke checks pass on Node 26.7.0; Node 22 remains unverified. Breakers and bounded dispatch waiting remain Phases 10 and 11.

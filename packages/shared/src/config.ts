@@ -192,6 +192,7 @@ export const gatewayConfigSchema = z
         retryBudget: z
           .object({
             ratio: fraction.default(0.1),
+            minRetries: nonnegative.int().default(1),
             windowMs: integer.default(10000),
           })
           .strict()

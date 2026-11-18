@@ -31,7 +31,9 @@ export type ChatDispatch = (
   traceparent?: string,
   onDispatch?: (
     release: (result: FinalizedRequest) => void,
-    route?: Pick<DecisionRecord, 'strategy' | 'workerId' | 'modelSelected'>,
+    route?: Pick<DecisionRecord, 'strategy' | 'workerId' | 'modelSelected'> & {
+      attempts?: number;
+    },
   ) => void,
 ) => Promise<{
   statusCode: number;
@@ -180,7 +182,7 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
         : undefined,
       (callback, route) => {
         if (route && lifecycle.decision)
-          Object.assign(lifecycle.decision, route, { attempts: 1 });
+          Object.assign(lifecycle.decision, { attempts: 1 }, route);
         lifecycle.addFinalizer(callback);
       },
     );
