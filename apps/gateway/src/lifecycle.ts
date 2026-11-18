@@ -1,3 +1,4 @@
+import type { DecisionRecord } from '@gateway/shared';
 import { randomBytes } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { GatewayError } from './errors.js';
@@ -23,6 +24,7 @@ export interface FinalizedRequest {
   errorCode?: string;
   ttftMs?: number;
   usage?: Record<string, unknown>;
+  decision?: DecisionRecord;
   durationMs: number;
 }
 
@@ -34,6 +36,7 @@ export class RequestLifecycle {
   errorCode?: string;
   ttftMs?: number;
   usage?: Record<string, unknown>;
+  decision?: DecisionRecord;
   streaming = false;
   private done = false;
   private result?: FinalizedRequest;
@@ -125,6 +128,22 @@ export class RequestLifecycle {
       usage: this.usage,
       durationMs: Date.now() - this.startedAt,
     };
+    if (this.decision)
+      result.decision = {
+        ...this.decision,
+        status: result.statusCode,
+        errorCode: result.errorCode,
+        latencyMs: result.durationMs,
+        ttftMs: result.ttftMs,
+        promptTokens:
+          typeof result.usage?.prompt_tokens === 'number'
+            ? result.usage.prompt_tokens
+            : undefined,
+        completionTokens:
+          typeof result.usage?.completion_tokens === 'number'
+            ? result.usage.completion_tokens
+            : undefined,
+      };
     this.result = result;
     for (const callback of this.finalizers.splice(0)) callback(result);
     this.request.log.info(result, 'request finalized');

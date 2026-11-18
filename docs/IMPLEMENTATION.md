@@ -1,6 +1,6 @@
 # Inference Gateway implementation plan
 
-Status: execution in progress; **Phases 1–7 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
+Status: execution in progress; **Phases 1–8 are complete**. Source of truth: [SPEC.md](SPEC.md), Draft v0.1. See [ARCHITECTURE.md](ARCHITECTURE.md) for proposed ownership, correctness and benchmark refinements mapped to these phases.
 
 This plan divides the specification into small deliverables that can be reviewed and verified independently. A phase is complete only when its exit checks pass. Phases 1–5 deliver the usable P0 path. Keep later functionality out of earlier phases unless required to make that phase work.
 
@@ -8,7 +8,7 @@ This plan divides the specification into small deliverables that can be reviewed
 
 Present: pnpm workspace, strict TypeScript base configuration, shared chat interfaces, a JSON/SSE gateway proxy, a reproducible mock worker, example configuration and a lockfile.
 
-Phases 1–6 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici adapters and a probed worker registry. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness now requires an eligible worker with a configured loaded model. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; authentication, retries and multi-worker routing are pending.
+Phases 1–6 provide compiled workspace builds, schema-derived configuration, a tested HTTP request lifecycle and an Undici adapters and a probed worker registry. Official OpenAI SDK JSON chat and model listing pass on Node 22.19.0, along with compiled startup and graceful shutdown. Phase 4's offline frozen install closes Phase 1's remaining verification gap. Readiness now requires an eligible worker with a configured loaded model. The gateway supports SSE streaming and explicitly rejects `auto` until its owning phase implements it; baseline multi-worker routing is implemented; authentication, retries and adaptive routing are pending.
 
 ## Execution rules
 
@@ -135,6 +135,8 @@ These clarify implementation ambiguities; changes to public behavior should be r
 **Exit:** unhealthy/draining/missing-model workers are excluded; counters return to zero on every outcome; timers stop on close.
 
 ## Phase 8 — Baseline worker routing
+
+**Status:** complete; see the Phase 8 completion record below.
 
 **Depends on:** 7. **Spec:** section 7.9; P1.
 
@@ -409,3 +411,11 @@ A guarded dispatch reservation is released by the existing request finalization 
 Added unit checks for initial availability, transitions, slow probes, optional metrics, model removal, independent workers, EWMA/window expiry, exactly-once release, jitter, overlapping/hanging probes and cleanup. HTTP checks cover readiness, unavailable dispatch, streaming completion and disconnect release. Updated prior proxy fixtures to advertise health/models and changed unavailable-worker expectations to 503. A pre-existing mock queue test exposed a short wall-clock race under suite load; its simulated work now lasts long enough for asynchronous admission assertions.
 
 Verification: full workspace tests, typecheck, lint, formatting, build and compiled SDK smoke checks. Runtime: Node 26.7.0; Node 22 remains unverified. Non-mock backend adapters, routing algorithms, breakers, public drain/admin endpoints and forced shutdown remain in their assigned later phases.
+
+## Phase 8 completion record
+
+Implemented RoutingStrategy-compatible round-robin (independent canonical-model cursors), least-in-flight with random ties, and power-of-two with distinct sampling and random ties. WorkerRouter centralizes health/loaded-model eligibility, tried-worker exclusion, open/half-open breaker admission hooks and saturation filtering. It selects, reserves breaker admission and increments in-flight synchronously; the Phase 7 finalizer remains the release owner. Saturation yields 503 gateway_overloaded; no eligible worker yields 503 no_healthy_worker.
+
+Dispatch uses the configured strategy or normalized request override, reports x-gateway-routing, and attaches canonical model/worker/strategy to the request DecisionRecord. Finalization records status, attempts, latency, TTFT and usage. Rejected selections retain zero attempts and no chosen worker. The provisional default is least_in_flight; explicit adaptive remains unsupported until Phase 18. Request overrides are available in the existing unauthenticated development gateway; Phase 14 will enforce bench-role permissions. Queueing and retry behavior remain in Phases 11 and 9 respectively.
+
+Verification: 164 tests pass, including per-model cursor isolation, injected random tie resolution, distinct two-worker sampling, shared exclusions across every strategy, synchronous capacity reservation, guarded release, breaker trial rejection, cancellation and 200 reproducible generated worker-state cases. A two-worker HTTP test verifies round-robin distribution, alias canonicalization, request overrides, decision records, concurrent saturation and drained-worker exclusion. Workspace typecheck, lint, formatting, builds and compiled SDK smoke checks pass on Node 26.7.0; Node 22 remains unverified in this environment.

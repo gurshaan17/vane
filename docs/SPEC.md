@@ -473,6 +473,8 @@ Adaptive details:
 
 When every candidate is saturated. The request waits in a bounded per-model FIFO queue (routing.maxQueue, routing.queueTimeoutMs default 2000). On timeout or when the queue is full the gateway returns 503 gateway_overloaded or no_healthy_worker, whichever is accurate. The wait counts against the request deadline and is cancelled on client abort.
 
+Implementation staging: Phases 8–17 default to least_in_flight and support the three baseline strategies. Explicit adaptive selection is rejected until Phase 18. Saturation currently returns 503 gateway_overloaded; bounded waiting arrives in Phase 11. Bench-role enforcement for request overrides arrives with Phase 14 authentication.
+
 Strategy selection. The default strategy is set in config. Keys with the bench role may override it per request with x-gateway-routing, which is how the benchmark compares strategies on the same running system and the same trace.
 
 ### 7.10 Resilience Layer

@@ -1,7 +1,11 @@
 import { Readable } from 'node:stream';
 import { proxyStream } from './streaming.js';
 import Fastify from 'fastify';
-import type { GatewayRequest, RequestExtensions } from '@gateway/shared';
+import type {
+  DecisionRecord,
+  GatewayRequest,
+  RequestExtensions,
+} from '@gateway/shared';
 import type { ResolvedConfig } from './config.js';
 import { errorBody, GatewayError, normalizeError } from './errors.js';
 import {
@@ -25,7 +29,10 @@ export type ChatDispatch = (
   request: GatewayRequest,
   extensions: RequestExtensions,
   traceparent?: string,
-  onDispatch?: (release: (result: FinalizedRequest) => void) => void,
+  onDispatch?: (
+    release: (result: FinalizedRequest) => void,
+    route?: Pick<DecisionRecord, 'strategy' | 'workerId' | 'modelSelected'>,
+  ) => void,
 ) => Promise<{
   statusCode: number;
   body: unknown;
@@ -148,6 +155,22 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
       signal: lifecycle.signal,
       deadlineAt: lifecycle.deadlineAt,
     };
+    lifecycle.decision = {
+      requestId: request.id,
+      at: lifecycle.startedAt,
+      keyId: gatewayRequest.keyId,
+      task: gatewayRequest.taskHint ?? 'unknown',
+      taskSource: gatewayRequest.taskHint ? 'hint' : 'default',
+      priority: gatewayRequest.priority,
+      modelRequested: body.model,
+      modelSelected: body.model,
+      strategy: extensions.routing ?? config.routing.strategy,
+      attempts: 0,
+      cache: 'bypass',
+      coalesced: false,
+      status: 0,
+      latencyMs: 0,
+    };
     lifecycle.streaming = gatewayRequest.stream;
     const result = await dispatch(
       gatewayRequest,
@@ -155,7 +178,11 @@ export function createApp(config: ResolvedConfig, options: AppOptions = {}) {
       typeof request.headers.traceparent === 'string'
         ? request.headers.traceparent
         : undefined,
-      (callback) => lifecycle.addFinalizer(callback),
+      (callback, route) => {
+        if (route && lifecycle.decision)
+          Object.assign(lifecycle.decision, route, { attempts: 1 });
+        lifecycle.addFinalizer(callback);
+      },
     );
     lifecycle.signal.throwIfAborted();
     if (gatewayRequest.stream && result.body instanceof Readable) {

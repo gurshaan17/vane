@@ -3,12 +3,15 @@ import type { ResolvedConfig } from './config.js';
 import { GatewayError } from './errors.js';
 import { UpstreamError } from './adapter.js';
 import { WorkerRegistry } from './registry.js';
+import { WorkerRouter, baselineStrategy } from './router.js';
 import type { ChatDispatch } from './app.js';
 import type { ChatBody } from './validation.js';
 
-/** Uses the first eligible configured worker; routing strategies arrive in Phase 8. */
+/** Baseline routing reserves capacity before upstream dispatch. */
 export function createWorkerDispatch(config: ResolvedConfig) {
+  const defaultStrategy = baselineStrategy(config.routing.strategy);
   const registry = new WorkerRegistry(config);
+  const router = new WorkerRouter(registry);
   const names = new Map(
     config.models.flatMap((model) =>
       [model.id, ...model.aliases].map((name) => [name, model.id]),
@@ -34,33 +37,31 @@ export function createWorkerDispatch(config: ResolvedConfig) {
 
   const chat: ChatDispatch = async (
     request: GatewayRequest,
-    _extensions,
+    extensions,
     traceparent,
     onDispatch,
   ) => {
     const model = resolveModel(request.model);
-    const entry = registry.eligible(model)[0];
-    if (!entry)
-      throw new GatewayError(
-        503,
-        'no_healthy_worker',
-        'No healthy worker serves this model',
-        'server_error',
-      );
+    const strategy = baselineStrategy(extensions.routing ?? defaultStrategy);
+    const { entry, release } = router.select(
+      { request, model, triedWorkerIds: new Set(), attempt: 1 },
+      strategy,
+    );
     const { config: worker, adapter } = entry;
     const startedAt = Date.now();
-    const release = registry.reserve(entry);
-    onDispatch?.((result) =>
-      release({
-        cancelled: result.outcome === 'cancelled',
-        failed:
-          result.outcome === 'timeout' ||
-          result.errorCode === 'upstream_error' ||
-          result.errorCode === 'upstream_timeout' ||
-          result.statusCode >= 500,
-        latencyMs: Date.now() - startedAt,
-        ttftMs: result.ttftMs,
-      }),
+    onDispatch?.(
+      (result) =>
+        release({
+          cancelled: result.outcome === 'cancelled',
+          failed:
+            result.outcome === 'timeout' ||
+            result.errorCode === 'upstream_error' ||
+            result.errorCode === 'upstream_timeout' ||
+            result.statusCode >= 500,
+          latencyMs: Date.now() - startedAt,
+          ttftMs: result.ttftMs,
+        }),
+      { strategy, workerId: worker.id, modelSelected: model },
     );
     let response;
     try {
@@ -100,6 +101,7 @@ export function createWorkerDispatch(config: ResolvedConfig) {
       headers: {
         'x-gateway-model': model,
         'x-gateway-worker': worker.id,
+        'x-gateway-routing': strategy,
         'x-gateway-attempts': '1',
         'x-gateway-fallback': 'false',
       },

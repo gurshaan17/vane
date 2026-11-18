@@ -164,7 +164,7 @@ export const gatewayConfigSchema = z
       .default({}),
     routing: z
       .object({
-        strategy: routingNameSchema.default('adaptive'),
+        strategy: routingNameSchema.default('least_in_flight'),
         maxQueue: nonnegative.int().default(200),
         queueTimeoutMs: integer.default(2000),
         adaptive: z

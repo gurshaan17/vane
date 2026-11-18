@@ -119,6 +119,7 @@ try {
   assert.equal(data.model, 'mock-model');
   assert.equal(response.headers.get('x-request-id'), 'compiled-sdk-smoke');
   assert.equal(response.headers.get('x-gateway-worker'), 'mock-1');
+  assert.equal(response.headers.get('x-gateway-routing'), 'least_in_flight');
   let streamed = '';
   let usage;
   const stream = await client.chat.completions.create({
